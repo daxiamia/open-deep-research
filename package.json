@@ -17,6 +17,7 @@
     "autoprefixer": "10.4.17",
     "class-variance-authority": "^0.7.0",
     "classnames": "^2.5.1",
+    "date-fns": "^4.1.0",
     "framer-motion": "^11.18.1",
     "js-tiktoken": "^1.0.17",
     "lodash-es": "^4.17.21",

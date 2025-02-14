@@ -2,6 +2,7 @@ import FirecrawlApp, { SearchResponse } from '@mendable/firecrawl-js';
 import { generateObject } from 'ai';
 import { compact } from 'lodash-es';
 import { z } from 'zod';
+import { logger } from './logger';
 
 import { createModel, trimPrompt } from './ai/providers';
 import { systemPrompt } from './prompt';
@@ -76,16 +77,23 @@ async function generateSerpQueries({
 }) {
   await logProgress(formatProgress.generating(numQueries, query), onProgress);
 
+  const promptText = `Given the following prompt from the user, generate a list of SERP queries to research the topic. Return a maximum of ${numQueries} queries, but feel free to return less if the original prompt is clear. Make sure each query is unique and not similar to each other: <prompt>${query}</prompt>\n\n${
+    learnings
+      ? `Here are some learnings from previous research, use them to generate more specific queries: ${learnings.join(
+          '\n',
+        )}`
+      : ''
+  }`;
+  logger.logObject('generate promptText:', {
+    query,
+    numQueries,
+    promptText,
+    hasLearnings: !!learnings
+  });
   const res = await generateObject({
     model,
     system: systemPrompt(),
-    prompt: `Given the following prompt from the user, generate a list of SERP queries to research the topic. Return a maximum of ${numQueries} queries, but feel free to return less if the original prompt is clear. Make sure each query is unique and not similar to each other: <prompt>${query}</prompt>\n\n${
-      learnings
-        ? `Here are some learnings from previous research, use them to generate more specific queries: ${learnings.join(
-            '\n',
-          )}`
-        : ''
-    }`,
+    prompt: promptText,
     schema: z.object({
       queries: z
         .array(
@@ -101,7 +109,9 @@ async function generateSerpQueries({
         .describe(`List of SERP queries, max of ${numQueries}`),
     }),
   });
-
+  logger.logObject('Generate SERP Queries Result', {
+    queries: res.object.queries.map(q => q.query)
+  });
   const queriesList = res.object.queries.map(q => q.query).join(', ');
   await logProgress(
     formatProgress.created(res.object.queries.length, queriesList),
@@ -132,13 +142,20 @@ async function processSerpResult({
 
   await logProgress(formatProgress.ran(query, contents.length), onProgress);
 
+  const promptText2 = `Given the following contents from a SERP search for the query <query>${query}</query>, generate a list of learnings from the contents. Return a maximum of ${numLearnings} learnings, but feel free to return less if the contents are clear. Make sure each learning is unique and not similar to each other. The learnings should be concise and to the point, as detailed and information dense as possible. Make sure to include any entities like people, places, companies, products, things, etc in the learnings, as well as any exact metrics, numbers, or dates. The learnings will be used to research the topic further.\n\n<contents>${contents
+      .map(content => `<content>\n${content}\n</content>`)
+      .join('\n')}</contents>`;
+
+  logger.logObject('process promptText2', {
+    query,
+    contentsCount: contents.length,
+    promptText: promptText2
+  });
   const res = await generateObject({
     model,
     abortSignal: AbortSignal.timeout(60_000),
     system: systemPrompt(),
-    prompt: `Given the following contents from a SERP search for the query <query>${query}</query>, generate a list of learnings from the contents. Return a maximum of ${numLearnings} learnings, but feel free to return less if the contents are clear. Make sure each learning is unique and not similar to each other. The learnings should be concise and to the point, as detailed and information dense as possible. Make sure to include any entities like people, places, companies, products, things, etc in the learnings, as well as any exact metrics, numbers, or dates. The learnings will be used to research the topic further.\n\n<contents>${contents
-      .map(content => `<content>\n${content}\n</content>`)
-      .join('\n')}</contents>`,
+    prompt: promptText2,
     schema: z.object({
       learnings: z
         .array(z.string())
@@ -177,10 +194,15 @@ export async function writeFinalReport({
     150_000,
   );
 
+  const writeFinalText = `Given the following prompt from the user, write a final report on the topic using the learnings from research and format it in proper Markdown. Use Markdown syntax (headings, lists, horizontal rules, etc.) to structure the document. Aim for a detailed report of at least 3 pages.\n\n<prompt>${prompt}</prompt>\n\nHere are all the learnings from previous research:\n\n<learnings>\n${learningsString}\n</learnings>`;
+  logger.logObject('writeFinalText', {
+    contentsCount: learningsString.length,
+    promptText: writeFinalText
+  });
   const res = await generateObject({
     model,
     system: systemPrompt(),
-    prompt: `Given the following prompt from the user, write a final report on the topic using the learnings from research and format it in proper Markdown. Use Markdown syntax (headings, lists, horizontal rules, etc.) to structure the document. Aim for a detailed report of at least 3 pages.\n\n<prompt>${prompt}</prompt>\n\nHere are all the learnings from previous research:\n\n<learnings>\n${learningsString}\n</learnings>`,
+    prompt: writeFinalText,
     schema: z.object({
       reportMarkdown: z
         .string()
