@@ -16,6 +16,14 @@ export async function POST(req: NextRequest) {
       modelId = "o3-mini",
     } = await req.json();
 
+    // 添加输入验证
+    if (!query || typeof query !== 'string') {
+      return Response.json(
+        { error: "Invalid query parameter" },
+        { status: 400 }
+      );
+    }
+
     // Retrieve API keys from secure cookies
     const openaiKey = req.cookies.get("openai-key")?.value;
     const firecrawlKey = req.cookies.get("firecrawl-key")?.value;
@@ -42,14 +50,14 @@ export async function POST(req: NextRequest) {
       FireCrawl: firecrawlKey ? "✅" : "❌",
     });
 
+    const encoder = new TextEncoder();
+    const stream = new TransformStream();
+    const writer = stream.writable.getWriter();
+
     try {
       const model = createModel(modelId as AIModel, openaiKey);
       console.log("\n🤖 [RESEARCH ROUTE] === Model Created ===");
       console.log("Using Model:", modelId);
-
-      const encoder = new TextEncoder();
-      const stream = new TransformStream();
-      const writer = stream.writable.getWriter();
 
       (async () => {
         try {
@@ -60,6 +68,11 @@ export async function POST(req: NextRequest) {
             modelId,
             apiKey: openaiKey,
           });
+
+          if (!feedbackQuestions) {
+            throw new Error("Failed to generate feedback questions");
+          }
+
           await writer.write(
             encoder.encode(
               `data: ${JSON.stringify({
@@ -72,7 +85,7 @@ export async function POST(req: NextRequest) {
             )
           );
 
-          const { learnings, visitedUrls } = await deepResearch({
+          const researchResult = await deepResearch({
             query,
             breadth,
             depth,
@@ -94,6 +107,12 @@ export async function POST(req: NextRequest) {
             },
           });
 
+          if (!researchResult || !Array.isArray(researchResult.learnings)) {
+            throw new Error("Invalid research result structure");
+          }
+
+          const { learnings = [], visitedUrls = [] } = researchResult;
+
           console.log("\n✅ [RESEARCH ROUTE] === Research Completed ===");
           console.log("Learnings Count:", learnings.length);
           console.log("Visited URLs Count:", visitedUrls.length);
@@ -104,6 +123,10 @@ export async function POST(req: NextRequest) {
             visitedUrls,
             model,
           });
+
+          if (!report) {
+            throw new Error("Failed to generate final report");
+          }
 
           await writer.write(
             encoder.encode(
@@ -116,14 +139,14 @@ export async function POST(req: NextRequest) {
               })}\n\n`
             )
           );
-        } catch (error) {
-          console.error("\n❌ [RESEARCH ROUTE] === Research Process Error ===");
-          console.error("Error:", error);
+        } catch (error: any) {
+          console.error("\n❌ [RESEARCH ROUTE] Research Process Error:", error);
           await writer.write(
             encoder.encode(
               `data: ${JSON.stringify({
                 type: "error",
-                message: "Research failed",
+                message: error.message || "Research process failed",
+                details: process.env.NODE_ENV === 'development' ? error.stack : undefined
               })}\n\n`
             )
           );
@@ -139,14 +162,20 @@ export async function POST(req: NextRequest) {
           Connection: "keep-alive",
         },
       });
-    } catch (error) {
-      console.error("\n💥 [RESEARCH ROUTE] === Route Error ===");
-      console.error("Error:", error);
-      return Response.json({ error: "Research failed" }, { status: 500 });
+    } catch (error: any) {
+      console.error("\n💥 [RESEARCH ROUTE] Route Error:", error);
+      return Response.json({ 
+        error: "Research failed",
+        message: error.message,
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      }, { status: 500 });
     }
-  } catch (error) {
-    console.error("\n💥 [RESEARCH ROUTE] === Parse Error ===");
-    console.error("Error:", error);
-    return Response.json({ error: "Research failed" }, { status: 500 });
+  } catch (error: any) {
+    console.error("\n💥 [RESEARCH ROUTE] Parse Error:", error);
+    return Response.json({ 
+      error: "Invalid request",
+      message: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    }, { status: 400 });
   }
 }
